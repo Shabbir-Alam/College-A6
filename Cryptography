@@ -1,0 +1,90 @@
+# pip install cryptography (run this in terminal)
+
+
+import argparse
+import hashlib
+import json
+import os
+from cryptography.fernet import Fernet
+
+BASELINE_FILE = ".baseline_hashes.json.enc"
+KEY_FILE = ".fernet_key.key"
+
+# Generate and save Fernet key if not already present
+def load_key():
+    if not os.path.exists(KEY_FILE):
+        key = Fernet.generate_key()
+        with open(KEY_FILE, "wb") as f:
+            f.write(key)
+    else:
+        with open(KEY_FILE, "rb") as f:
+            key = f.read()
+    return key
+
+# Compute the hash of a file
+def compute_hash(file_path, algorithm="sha256"):
+    hasher = hashlib.new(algorithm)
+    with open(file_path, "rb") as f:
+        while chunk := f.read(4096):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+# Save baseline hashes encrypted
+def save_baseline(file_path, algorithm, file_hash):
+    key = load_key()
+    cipher = Fernet(key)
+    
+    if os.path.exists(BASELINE_FILE):
+        with open(BASELINE_FILE, "rb") as f:
+            decrypted = cipher.decrypt(f.read()).decode()
+            data = json.loads(decrypted)
+    else:
+        data = {}
+    
+    data[file_path] = {"algorithm": algorithm, "hash": file_hash}
+    encrypted_data = cipher.encrypt(json.dumps(data).encode())
+    
+    with open(BASELINE_FILE, "wb") as f:
+        f.write(encrypted_data)
+
+# Verify file integrity
+def verify_integrity(file_path, algorithm):
+    key = load_key()
+    cipher = Fernet(key)
+    
+    if not os.path.exists(BASELINE_FILE):
+        print("No baseline file found.")
+        return
+    
+    with open(BASELINE_FILE, "rb") as f:
+        decrypted = cipher.decrypt(f.read()).decode()
+        data = json.loads(decrypted)
+
+    if file_path not in data:
+        print("No baseline hash found for this file.")
+        return
+
+    expected = data[file_path]
+    current_hash = compute_hash(file_path, algorithm)
+    
+    if current_hash == expected["hash"]:
+        print("Integrity check passed! Hashes match.")
+    else:
+        print("Integrity check failed! File may have been modified.")
+
+def main():
+    parser = argparse.ArgumentParser(description="File Integrity Verifier")
+    parser.add_argument("--file", required=True, help="File to verify")
+    parser.add_argument("--algorithm", default="sha256", help="Hash algorithm (md5, sha256, sha512)")
+    parser.add_argument("--save-baseline", action="store_true", help="Save baseline hash")
+    args = parser.parse_args()
+
+    if args.save_baseline:
+        file_hash = compute_hash(args.file, args.algorithm)
+        save_baseline(args.file, args.algorithm, file_hash)
+        print(f"Baseline {args.algorithm.upper()} hash for {args.file}:\n{file_hash}\nSaved to {BASELINE_FILE}")
+    else:
+        verify_integrity(args.file, args.algorithm)
+
+if __namr__ == "_main_":
+    main()
